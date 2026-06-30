@@ -19,13 +19,10 @@
   <div class="auth-card">
     <div class="auth-logo">&#9889; Tasky</div>
     <div class="auth-sub">Your personal productivity command center</div>
-    <div class="auth-tabs">
-      <div class="auth-tab active" onclick="authMode('login')">Sign In</div>
-      <div class="auth-tab" onclick="authMode('signup')">Sign Up</div>
-    </div>
-    <div class="field"><label>Username</label><input id="au" placeholder="Enter username" autocomplete="username" /></div>
-    <div class="field"><label>Password</label><input id="ap" type="password" placeholder="Enter password" autocomplete="current-password" /></div>
-    <button class="btn btn-primary full" id="authBtn" onclick="doAuth()">Sign In</button>
+    <div class="field"><label>Email</label><input id="authEmail" type="email" placeholder="Enter email" autocomplete="email" /></div>
+    <div class="field" id="otpField" style="display:none;"><label>OTP</label><input id="authOtp" inputmode="numeric" maxlength="6" placeholder="Enter 6-digit code" autocomplete="one-time-code" /></div>
+    <button class="btn btn-primary full" id="authBtn" onclick="handleAuth()">Send OTP</button>
+    <div class="auth-footer" id="authHint">We'll email a secure login code.</div>
     <div class="auth-footer"><button class="link-btn" onclick="toggleTheme()">&#9790; Toggle Theme</button></div>
   </div>
 </div>
@@ -77,6 +74,7 @@
         <select id="sortSel" onchange="renderTasks()" style="width:auto;padding:7px 12px;font-size:.78rem;margin:0;">
           <option value="date">By Date</option>
           <option value="priority">By Priority</option>
+          <option value="completed">Completed</option>
           <option value="new">Newest</option>
         </select>
       </div>
@@ -91,6 +89,11 @@
         <div class="chip" data-f="Low" onclick="setF('Low')">Low</div>
       </div>
       <div class="task-list" id="taskList"></div>
+
+      <div class="card activity-card">
+        <div class="prog-hd"><span>Recent Activity</span></div>
+        <div class="activity-list" id="activityList"></div>
+      </div>
     </div>
 
     <!-- NOTES -->
@@ -143,6 +146,7 @@
             <div class="u-avatar" id="setAvatar">?</div>
             <div>
               <div class="account-name" id="setName">User</div>
+              <div class="account-meta" id="setEmail">email@example.com</div>
               <div class="account-meta" id="setSince">Tasky account</div>
             </div>
           </div>

@@ -22,12 +22,20 @@ const taskSchema = new mongoose.Schema(
       enum: ['Low', 'Medium', 'High'],
       default: 'Medium',
     },
+    category: {
+      type: String,
+      trim: true,
+      default: 'Personal',
+    },
     dueDate: {
       type: Date,
     },
     completed: {
       type: Boolean,
       default: false,
+    },
+    completedAt: {
+      type: Date,
     },
   },
   { timestamps: true }

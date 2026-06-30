@@ -14,7 +14,7 @@ const LS = {
   setSettings: s => localStorage.setItem('tky_cfg', JSON.stringify(s)),
 };
 
-const API_URL = 'https://smart-task-manager-1-sn21.onrender.com/api';
+const API_URL = 'https://tasky-website.onrender.com';
 
 function today() { return new Date().toISOString().split('T')[0]; }
 

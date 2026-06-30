@@ -1,68 +1,83 @@
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
+const OTP = require('../models/OTP');
 const User = require('../models/User');
+const sendEmail = require('../utils/sendEmail');
 
-const generateToken = id => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
-};
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const hashPassword = password => {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return `${salt}:${hash}`;
-};
+const sanitizeEmail = email => String(email || '').trim().toLowerCase();
 
-const verifyPassword = (password, storedPassword) => {
-  const [salt, storedHash] = storedPassword.split(':');
-  if (!salt || !storedHash) return false;
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return crypto.timingSafeEqual(Buffer.from(storedHash, 'hex'), Buffer.from(hash, 'hex'));
-};
+const generateToken = id => jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
 
-const registerUser = async (req, res) => {
+const generateOTP = () => String(Math.floor(100000 + Math.random() * 900000));
+
+const sendOTP = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const email = sanitizeEmail(req.body.email);
 
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: 'Name, email, and password are required' });
+    if (!EMAIL_RE.test(email)) {
+      return res.status(400).json({ message: 'A valid email is required' });
     }
 
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(409).json({ message: 'User already exists' });
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      return res.status(500).json({ message: 'Email service is not configured' });
     }
 
-    const user = await User.create({ name, email, password: hashPassword(password) });
+    const otp = generateOTP();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    res.status(201).json({
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      token: generateToken(user._id),
+    // Keep only one active OTP per email.
+    await OTP.deleteMany({ email });
+    await OTP.create({ email, otp, expiresAt });
+
+    await sendEmail({
+      to: email,
+      subject: 'Your Tasky login code',
+      text: `Your Tasky OTP is ${otp}. It expires in 5 minutes.`,
+      html: `<p>Your Tasky OTP is <strong>${otp}</strong>.</p><p>It expires in 5 minutes.</p>`,
     });
+
+    res.json({ message: 'OTP sent successfully' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-const loginUser = async (req, res) => {
+const verifyOTP = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = sanitizeEmail(req.body.email);
+    const otp = String(req.body.otp || '').trim();
 
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Email and password are required' });
+    if (!EMAIL_RE.test(email)) {
+      return res.status(400).json({ message: 'A valid email is required' });
     }
 
-    const user = await User.findOne({ email });
-    if (!user || !verifyPassword(password, user.password)) {
-      return res.status(401).json({ message: 'Invalid email or password' });
+    if (!/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ message: 'A valid 6-digit OTP is required' });
     }
+
+    const otpRecord = await OTP.findOne({ email, otp });
+    if (!otpRecord || otpRecord.expiresAt < new Date()) {
+      await OTP.deleteMany({ email });
+      return res.status(401).json({ message: 'Invalid or expired OTP' });
+    }
+
+    let user = await User.findOne({ email });
+    if (!user) {
+      const name = email.split('@')[0];
+      user = await User.create({ name, email, joinDate: new Date() });
+    }
+
+    await OTP.deleteMany({ email });
 
     res.json({
-      _id: user._id,
-      name: user.name,
-      email: user.email,
       token: generateToken(user._id),
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        joinDate: user.joinDate || user.createdAt,
+      },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -70,11 +85,16 @@ const loginUser = async (req, res) => {
 };
 
 const getProfile = async (req, res) => {
-  res.json(req.user);
+  res.json({
+    _id: req.user._id,
+    name: req.user.name,
+    email: req.user.email,
+    joinDate: req.user.joinDate || req.user.createdAt,
+  });
 };
 
 module.exports = {
-  registerUser,
-  loginUser,
+  sendOTP,
+  verifyOTP,
   getProfile,
 };
