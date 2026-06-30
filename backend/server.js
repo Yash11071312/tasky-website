@@ -16,14 +16,17 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/', (req, res) => {
-  res.json({ message: 'Tasky API is running' });
+  res.send('Tasky API running');
 });
 
 app.use('/api/auth', authRoutes);
 app.use('/api/tasks', taskRoutes);
 
 app.use((req, res) => {
-  res.status(404).json({ message: 'Route not found' });
+  res.status(404).json({
+    message: 'Route not found',
+    route: req.originalUrl,
+  });
 });
 
 app.listen(PORT, () => {

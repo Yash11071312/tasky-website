@@ -14,7 +14,7 @@ const LS = {
   setSettings: s => localStorage.setItem('tky_cfg', JSON.stringify(s)),
 };
 
-const API_URL = 'https://tasky-website.onrender.com';
+const API_URL = 'https://tasky-website.onrender.com/api';
 
 function today() { return new Date().toISOString().split('T')[0]; }
 
