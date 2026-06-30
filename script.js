@@ -1,25 +1,133 @@
 // STATE
 let CU = null, tasks = [], notes = [], curF = 'All';
-let mode = 'login';
+let taskStats = null, recentActivity = [];
+let authStep = 'email';
 let pieC, barC;
 let mobile = window.innerWidth <= 768;
 window.addEventListener('resize', () => { mobile = window.innerWidth <= 768; });
 
 // STORAGE
 const LS = {
-  users: () => JSON.parse(localStorage.getItem('tky_u') || '[]'),
-  setUsers: u => localStorage.setItem('tky_u', JSON.stringify(u)),
-  tasks: () => CU ? JSON.parse(localStorage.getItem(`tky_t_${CU.id}`) || '[]') : [],
-  setTasks: t => localStorage.setItem(`tky_t_${CU.id}`, JSON.stringify(t)),
   notes: () => CU ? JSON.parse(localStorage.getItem(`tky_n_${CU.id}`) || '[]') : [],
   setNotes: n => localStorage.setItem(`tky_n_${CU.id}`, JSON.stringify(n)),
-  stats: () => CU ? JSON.parse(localStorage.getItem(`tky_s_${CU.id}`) || '{"streak":0,"last":"","done":0}') : {},
-  setStats: s => localStorage.setItem(`tky_s_${CU.id}`, JSON.stringify(s)),
   settings: () => JSON.parse(localStorage.getItem('tky_cfg') || '{"theme":"dark"}'),
   setSettings: s => localStorage.setItem('tky_cfg', JSON.stringify(s)),
 };
 
+const API_URL = 'https://smart-task-manager-1-sn21.onrender.com/api';
+
 function today() { return new Date().toISOString().split('T')[0]; }
+
+// API
+function token() { return localStorage.getItem('token'); }
+
+function normalizeUser(user) {
+  if (!user) return null;
+  const name = user.name || user.u || user.email?.split('@')[0] || 'User';
+  return {
+    ...user,
+    id: user._id || user.id,
+    u: name,
+    at: user.joinDate || user.at || user.createdAt,
+  };
+}
+
+function normalizeTask(task) {
+  if (!task) return task;
+  return {
+    ...task,
+    id: task._id || task.id,
+    text: task.text || task.title,
+    cat: task.cat || task.category || '',
+    date: task.date || (task.dueDate ? String(task.dueDate).split('T')[0] : ''),
+    done: Boolean(task.done ?? task.completed),
+    doneAt: task.doneAt || task.completedAt,
+    at: task.at || task.createdAt,
+  };
+}
+
+function storeAuth(auth) {
+  localStorage.setItem('token', auth.token);
+  const user = normalizeUser(auth.user);
+  localStorage.setItem('user', JSON.stringify(user));
+  return user;
+}
+
+function clearAuth() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+}
+
+function expireSession() {
+  clearAuth();
+  toast('Session expired. Please login again.');
+  setTimeout(() => location.reload(), 900);
+}
+
+async function apiRequest(path, options = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  const authToken = token();
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+
+  let res;
+  try {
+    res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  } catch (error) {
+    toast('Network error. Please check your connection.');
+    throw error;
+  }
+
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    expireSession();
+    throw new Error(data.message || 'Unauthorized');
+  }
+  if (!res.ok) {
+    const message = data.message || 'Request failed';
+    toast(message);
+    throw new Error(message);
+  }
+  return data;
+}
+
+function login(email) {
+  return apiRequest('/auth/send-otp', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+function verifyOTP(email, otp) {
+  return apiRequest('/auth/verify-otp', {
+    method: 'POST',
+    body: JSON.stringify({ email, otp }),
+  });
+}
+
+function getProfile() { return apiRequest('/auth/profile'); }
+function getTasks() { return apiRequest('/tasks'); }
+function createTask(task) {
+  return apiRequest('/tasks', { method: 'POST', body: JSON.stringify(task) });
+}
+function updateTask(id, task) {
+  return apiRequest(`/tasks/${id}`, { method: 'PUT', body: JSON.stringify(task) });
+}
+function deleteTask(id) {
+  return apiRequest(`/tasks/${id}`, { method: 'DELETE' });
+}
+function getTaskStats() { return apiRequest('/tasks/stats'); }
+function getRecentActivity() { return apiRequest('/tasks/activity'); }
+
+async function refreshCloudData() {
+  const [taskList, stats, activity] = await Promise.all([
+    getTasks(),
+    getTaskStats(),
+    getRecentActivity(),
+  ]);
+  tasks = taskList.map(normalizeTask);
+  taskStats = stats;
+  recentActivity = activity;
+}
 
 // THEME
 function applyTheme() {
@@ -35,41 +143,49 @@ function toggleTheme() {
 }
 
 // AUTH
-function authMode(m) {
-  mode = m;
-  document.querySelectorAll('.auth-tab').forEach((t, i) => t.classList.toggle('active', i === (m === 'login' ? 0 : 1)));
-  document.getElementById('authBtn').textContent = m === 'login' ? 'Sign In' : 'Create Account';
-}
+async function handleAuth() {
+  const email = document.getElementById('authEmail').value.trim().toLowerCase();
+  const otp = document.getElementById('authOtp').value.trim();
+  const btn = document.getElementById('authBtn');
 
-function doAuth() {
-  const u = document.getElementById('au').value.trim();
-  const p = document.getElementById('ap').value;
-  if (!u || !p) return toast('Please fill in all fields');
-  if (p.length < 3) return toast('Password must be at least 3 characters');
-  const users = LS.users();
-  if (mode === 'signup') {
-    if (users.find(x => x.u.toLowerCase() === u.toLowerCase())) return toast('Username already taken');
-    users.push({ id: Date.now().toString(), u, p, at: new Date().toISOString() });
-    LS.setUsers(users);
-    toast('Account created! Sign in now');
-    authMode('login');
-  } else {
-    const user = users.find(x => x.u.toLowerCase() === u.toLowerCase() && x.p === p);
-    if (!user) return toast('Invalid username or password');
-    localStorage.setItem('tky_session', user.id);
-    boot(user);
+  if (!email) return toast('A valid email is required');
+  btn.disabled = true;
+
+  try {
+    if (authStep === 'email') {
+      await login(email);
+      authStep = 'otp';
+      document.getElementById('otpField').style.display = 'block';
+      document.getElementById('authBtn').textContent = 'Verify OTP';
+      document.getElementById('authHint').textContent = 'Enter the 6-digit code sent to your email.';
+      document.getElementById('authOtp').focus();
+      toast('OTP sent successfully');
+      return;
+    }
+
+    if (!/^\d{6}$/.test(otp)) return toast('Enter a valid 6-digit OTP');
+    const auth = await verifyOTP(email, otp);
+    const user = storeAuth(auth);
+    await boot(user);
+  } finally {
+    btn.disabled = false;
   }
 }
 
-function checkSession() {
-  const sid = localStorage.getItem('tky_session');
-  if (!sid) return;
-  const user = LS.users().find(x => x.id === sid);
-  if (user) boot(user);
+async function checkSession() {
+  if (!token()) return;
+  try {
+    const user = normalizeUser(await getProfile());
+    localStorage.setItem('user', JSON.stringify(user));
+    await boot(user);
+  } catch (error) {
+    if (token()) toast('Could not restore your session');
+  }
 }
 
-function boot(user) {
+async function boot(user) {
   CU = user;
+  await refreshCloudData();
   document.getElementById('authScreen').style.display = 'none';
   document.getElementById('appScreen').classList.add('on');
   document.getElementById('sAvatar').textContent = user.u[0].toUpperCase();
@@ -77,16 +193,15 @@ function boot(user) {
   const h = new Date().getHours();
   const g = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
   document.getElementById('greeting').textContent = `${g}, ${user.u}`;
-  tasks = LS.tasks();
   notes = LS.notes();
   renderTasks();
   renderNotes();
   renderSettings();
-  updateStreak();
+  renderActivity();
 }
 
 function logout() {
-  localStorage.removeItem('tky_session');
+  clearAuth();
   location.reload();
 }
 
@@ -110,7 +225,6 @@ function setF(f) {
 }
 
 function renderTasks() {
-  tasks = LS.tasks();
   const q = (document.getElementById('srch')?.value || '').toLowerCase();
   const sort = document.getElementById('sortSel')?.value || 'date';
   const pri = { High: 0, Medium: 1, Low: 2 };
@@ -126,7 +240,7 @@ function renderTasks() {
 
   if (sort === 'priority') list.sort((a, b) => pri[a.priority] - pri[b.priority]);
   else if (sort === 'date') list.sort((a, b) => (a.date || '9999') < (b.date || '9999') ? -1 : 1);
-  else list.sort((a, b) => Number(b.id) - Number(a.id));
+  else list.sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
 
   const el = document.getElementById('taskList');
   if (!list.length) {
@@ -157,19 +271,18 @@ function renderTasks() {
 }
 
 function updateDash() {
-  tasks = LS.tasks();
-  const total = tasks.length;
-  const done = tasks.filter(t => t.done).length;
-  const pct = total ? Math.round(done / total * 100) : 0;
+  const total = taskStats?.total ?? tasks.length;
+  const done = taskStats?.completed ?? tasks.filter(t => t.done).length;
+  const pending = taskStats?.pending ?? total - done;
+  const pct = taskStats?.completionPercentage ?? (total ? Math.round(done / total * 100) : 0);
   document.getElementById('stTotal').textContent = total;
   document.getElementById('stDone').textContent = done;
-  document.getElementById('stPend').textContent = total - done;
+  document.getElementById('stPend').textContent = pending;
   document.getElementById('pBar').style.width = pct + '%';
   document.getElementById('pPct').textContent = pct + '%';
 }
 
 function openTask(eid) {
-  tasks = LS.tasks();
   const t = eid ? tasks.find(x => x.id === eid) : null;
   const title = t ? 'Edit Task' : 'Add Task';
   const fill = (s, value) => { const el = document.getElementById(s); if (el) el.value = value; };
@@ -190,64 +303,91 @@ function openTask(eid) {
 function saveTask() { _saveTask(v('tTxt'), v('tPri'), v('tDate'), v('tCat'), v('tEid')); }
 function saveTaskD() { _saveTask(v('tTxtD'), v('tPriD'), v('tDateD'), v('tCatD'), v('tEidD')); }
 
-function _saveTask(text, pri, date, cat, eid) {
+async function _saveTask(text, pri, date, cat, eid) {
   text = text.trim();
   if (!text) return toast('Task text is required');
-  tasks = LS.tasks();
-  if (eid) {
-    const i = tasks.findIndex(t => t.id === eid);
-    if (i > -1) tasks[i] = { ...tasks[i], text, priority: pri, date, cat };
-    toast('Task updated');
-  } else {
-    tasks.push({ id: Date.now().toString(), text, priority: pri, date, cat, done: false, at: new Date().toISOString() });
-    toast('Task added');
+  try {
+    if (eid) {
+      const updated = normalizeTask(await updateTask(eid, { text, priority: pri, date, cat }));
+      const i = tasks.findIndex(t => t.id === eid);
+      if (i > -1) tasks[i] = updated;
+      toast('Task updated');
+    } else {
+      const created = normalizeTask(await createTask({ text, priority: pri, date, cat }));
+      tasks.unshift(created);
+      toast('Task added');
+    }
+    await refreshTaskMeta();
+    closeAll();
+    renderTasks();
+  } catch (error) {
+    console.error(error);
   }
-  LS.setTasks(tasks);
-  closeAll();
-  renderTasks();
 }
 
-function toggleTask(id) {
-  tasks = LS.tasks();
+async function toggleTask(id) {
   const t = tasks.find(x => x.id === id);
   if (!t) return;
-  t.done = !t.done;
-  if (t.done) {
-    t.doneAt = new Date().toISOString();
-    const s = LS.stats();
-    s.done = (s.done || 0) + 1;
-    LS.setStats(s);
-  } else {
-    delete t.doneAt;
+  try {
+    const updated = normalizeTask(await updateTask(id, { done: !t.done }));
+    const i = tasks.findIndex(x => x.id === id);
+    if (i > -1) tasks[i] = updated;
+    await refreshTaskMeta();
+    renderTasks();
+  } catch (error) {
+    console.error(error);
   }
-  LS.setTasks(tasks);
-  renderTasks();
-  updateStreak();
 }
 
 function deleteTaskBS() { _delTask(v('tEid')); }
 function deleteTaskMD() { _delTask(v('tEidD')); }
 function delTask(id) { if (confirm('Delete this task?')) _delTask(id); }
-function _delTask(id) {
+async function _delTask(id) {
   if (!id) return;
-  LS.setTasks(LS.tasks().filter(t => t.id !== id));
-  tasks = LS.tasks();
-  closeAll();
-  renderTasks();
-  toast('Task deleted');
+  try {
+    await deleteTask(id);
+    tasks = tasks.filter(t => t.id !== id);
+    await refreshTaskMeta();
+    closeAll();
+    renderTasks();
+    toast('Task deleted');
+  } catch (error) {
+    console.error(error);
+  }
 }
 
-function updateStreak() {
-  const s = LS.stats();
-  const td = today();
-  if (s.last !== td) {
-    const yd = new Date();
-    yd.setDate(yd.getDate() - 1);
-    const ys = yd.toISOString().split('T')[0];
-    s.streak = s.last === ys ? (s.streak || 0) + 1 : 1;
-    s.last = td;
-    LS.setStats(s);
+async function refreshTaskMeta() {
+  const [stats, activity] = await Promise.all([getTaskStats(), getRecentActivity()]);
+  taskStats = stats;
+  recentActivity = activity;
+  renderActivity();
+  if (document.getElementById('analyticsView')?.classList.contains('active')) updateAnalytics();
+}
+
+function completionStreak() {
+  const days = new Set(tasks.filter(t => t.done).map(t => (t.doneAt || t.date || t.at || '').split('T')[0]).filter(Boolean));
+  let count = 0;
+  const d = new Date(today() + 'T12:00:00');
+  while (days.has(d.toISOString().split('T')[0])) {
+    count++;
+    d.setDate(d.getDate() - 1);
   }
+  return count;
+}
+
+function renderActivity() {
+  const el = document.getElementById('activityList');
+  if (!el) return;
+  if (!recentActivity.length) {
+    el.innerHTML = '<div class="empty"><p>No recent activity yet.</p></div>';
+    return;
+  }
+  el.innerHTML = recentActivity.map(a => `
+    <div class="activity-item">
+      <span>${esc(a.type || 'Task updated')}</span>
+      <strong>${esc(a.text || '')}</strong>
+      <span class="activity-time">${a.at ? new Date(a.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : ''}</span>
+    </div>`).join('');
 }
 
 // NOTES
@@ -314,15 +454,13 @@ function _delNote(id) {
 // ANALYTICS
 function updateAnalytics() {
   if (!CU || !window.Chart) return;
-  tasks = LS.tasks();
-  const total = tasks.length;
-  const done = tasks.filter(t => t.done).length;
-  const pct = total ? Math.round(done / total * 100) : 0;
-  const s = LS.stats();
+  const total = taskStats?.total ?? tasks.length;
+  const done = taskStats?.completed ?? tasks.filter(t => t.done).length;
+  const pct = taskStats?.completionPercentage ?? (total ? Math.round(done / total * 100) : 0);
 
   document.getElementById('sNum').textContent = pct + '%';
   document.getElementById('sArc').style.strokeDashoffset = 402 * (1 - pct / 100);
-  document.getElementById('streak').textContent = s.streak || 0;
+  document.getElementById('streak').textContent = completionStreak();
   document.getElementById('totDone').textContent = done;
   document.getElementById('totTasks').textContent = total;
 
@@ -372,6 +510,7 @@ function renderSettings() {
   if (!CU) return;
   document.getElementById('setAvatar').textContent = CU.u[0].toUpperCase();
   document.getElementById('setName').textContent = CU.u;
+  document.getElementById('setEmail').textContent = CU.email || '';
   const created = CU.at ? new Date(CU.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Tasky account';
   document.getElementById('setSince').textContent = `Member since ${created}`;
 }
@@ -407,6 +546,6 @@ function esc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 document.addEventListener('DOMContentLoaded', () => {
   applyTheme();
   checkSession();
-  document.getElementById('ap').addEventListener('keydown', e => { if (e.key === 'Enter') doAuth(); });
-  document.getElementById('au').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('ap').focus(); });
+  document.getElementById('authEmail').addEventListener('keydown', e => { if (e.key === 'Enter') handleAuth(); });
+  document.getElementById('authOtp').addEventListener('keydown', e => { if (e.key === 'Enter') handleAuth(); });
 });
