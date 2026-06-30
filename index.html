@@ -21,12 +21,7 @@
     <div class="auth-sub">Your personal productivity command center</div>
     <div class="field"><label>Email</label><input id="authEmail" type="email" placeholder="Enter email" autocomplete="email" /></div>
     <div class="field" id="otpField" style="display:none;"><label>OTP</label><input id="authOtp" inputmode="numeric" maxlength="6" placeholder="Enter 6-digit code" autocomplete="one-time-code" /></div>
-    <button class="btn btn-primary full" id="sendOtpBtn" onclick="sendOtpCode()">Send OTP</button>
-    <button class="btn btn-primary full" id="verifyOtpBtn" onclick="verifyOtpCode()" style="display:none;">Verify OTP</button>
-    <div class="btn-group" id="otpActions" style="display:none;">
-      <button class="btn btn-secondary" onclick="resendOtpCode()">Resend OTP</button>
-      <button class="btn btn-secondary" onclick="backToEmail()">Back</button>
-    </div>
+    <button class="btn btn-primary full" id="authBtn" onclick="handleAuth()">Send OTP</button>
     <div class="auth-footer" id="authHint">We'll email a secure login code.</div>
     <div class="auth-footer"><button class="link-btn" onclick="toggleTheme()">&#9790; Toggle Theme</button></div>
   </div>

@@ -48,8 +48,9 @@ function normalizeTask(task) {
 
 function storeAuth(auth) {
   localStorage.setItem('token', auth.token);
-  localStorage.setItem('user', JSON.stringify(auth.user));
-  return normalizeUser(auth.user);
+  const user = normalizeUser(auth.user);
+  localStorage.setItem('user', JSON.stringify(user));
+  return user;
 }
 
 function clearAuth() {
@@ -67,8 +68,6 @@ async function apiRequest(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   const authToken = token();
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
-  const expireOnUnauthorized = options.expireOnUnauthorized !== false;
-  delete options.expireOnUnauthorized;
 
   let res;
   try {
@@ -80,8 +79,7 @@ async function apiRequest(path, options = {}) {
 
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
-    if (expireOnUnauthorized) expireSession();
-    else toast(data.message || 'Invalid OTP');
+    expireSession();
     throw new Error(data.message || 'Unauthorized');
   }
   if (!res.ok) {
@@ -103,7 +101,6 @@ function verifyOTP(email, otp) {
   return apiRequest('/auth/verify-otp', {
     method: 'POST',
     body: JSON.stringify({ email, otp }),
-    expireOnUnauthorized: false,
   });
 }
 
@@ -146,93 +143,33 @@ function toggleTheme() {
 }
 
 // AUTH
-function setAuthStep(step) {
-  authStep = step;
-  const isOtp = step === 'otp';
-  document.getElementById('otpField').style.display = isOtp ? 'block' : 'none';
-  document.getElementById('sendOtpBtn').style.display = isOtp ? 'none' : 'block';
-  document.getElementById('verifyOtpBtn').style.display = isOtp ? 'block' : 'none';
-  document.getElementById('otpActions').style.display = isOtp ? 'flex' : 'none';
-  document.getElementById('authEmail').disabled = isOtp;
-  document.getElementById('authHint').textContent = isOtp
-    ? 'Enter the 6-digit code sent to your email.'
-    : "We'll email a secure login code.";
-  if (!isOtp) document.getElementById('authOtp').value = '';
-}
-
-function authEmail() {
-  return document.getElementById('authEmail').value.trim().toLowerCase();
-}
-
-async function sendOtpCode() {
-  const email = authEmail();
-  const btn = document.getElementById('sendOtpBtn');
-
-  if (!email) return toast('A valid email is required');
-  btn.disabled = true;
-
-  try {
-    await login(email);
-    console.log('OTP sent');
-    setAuthStep('otp');
-    document.getElementById('authOtp').focus();
-    toast('OTP sent successfully');
-  } catch (error) {
-    console.error(error);
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-async function verifyOtpCode() {
+async function handleAuth() {
   const email = document.getElementById('authEmail').value.trim().toLowerCase();
   const otp = document.getElementById('authOtp').value.trim();
-  const btn = document.getElementById('verifyOtpBtn');
+  const btn = document.getElementById('authBtn');
 
   if (!email) return toast('A valid email is required');
-  if (!/^\d{6}$/.test(otp)) return toast('Enter a valid 6-digit OTP');
   btn.disabled = true;
 
   try {
+    if (authStep === 'email') {
+      await login(email);
+      authStep = 'otp';
+      document.getElementById('otpField').style.display = 'block';
+      document.getElementById('authBtn').textContent = 'Verify OTP';
+      document.getElementById('authHint').textContent = 'Enter the 6-digit code sent to your email.';
+      document.getElementById('authOtp').focus();
+      toast('OTP sent successfully');
+      return;
+    }
+
+    if (!/^\d{6}$/.test(otp)) return toast('Enter a valid 6-digit OTP');
     const auth = await verifyOTP(email, otp);
-    console.log('OTP verified');
     const user = storeAuth(auth);
     await boot(user);
-  } catch (error) {
-    console.error(error);
   } finally {
     btn.disabled = false;
   }
-}
-
-function handleAuth() {
-  return authStep === 'otp' ? verifyOtpCode() : sendOtpCode();
-}
-
-async function resendOtpCode() {
-  const email = authEmail();
-  const btn = document.querySelector('#otpActions button');
-
-  if (!email) return toast('A valid email is required');
-  btn.disabled = true;
-
-  try {
-    await login(email);
-    console.log('OTP sent');
-    document.getElementById('authOtp').value = '';
-    document.getElementById('authOtp').focus();
-    toast('OTP sent successfully');
-  } catch (error) {
-    console.error(error);
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-function backToEmail() {
-  setAuthStep('email');
-  document.getElementById('authEmail').disabled = false;
-  document.getElementById('authEmail').focus();
 }
 
 async function checkSession() {
@@ -608,8 +545,7 @@ function esc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 
 document.addEventListener('DOMContentLoaded', () => {
   applyTheme();
-  setAuthStep('email');
   checkSession();
-  document.getElementById('authEmail').addEventListener('keydown', e => { if (e.key === 'Enter') sendOtpCode(); });
-  document.getElementById('authOtp').addEventListener('keydown', e => { if (e.key === 'Enter') verifyOtpCode(); });
+  document.getElementById('authEmail').addEventListener('keydown', e => { if (e.key === 'Enter') handleAuth(); });
+  document.getElementById('authOtp').addEventListener('keydown', e => { if (e.key === 'Enter') handleAuth(); });
 });
