@@ -1,100 +1,82 @@
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-const OTP = require('../models/OTP');
 const User = require('../models/User');
-const sendEmail = require('../utils/sendEmail');
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,30}$/;
+const SCRYPT_KEY_LENGTH = 64;
 
-const sanitizeEmail = email => String(email || '').trim().toLowerCase();
+const sanitizeUsername = username => String(username || '').trim().toLowerCase();
 
 const generateToken = id => jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
 
-const generateOTP = () => String(Math.floor(100000 + Math.random() * 900000));
-
-const sendOTP = async (req, res) => {
-  try {
-    const email = sanitizeEmail(req.body.email);
-
-    if (!EMAIL_RE.test(email)) {
-      return res.status(400).json({ message: 'A valid email is required' });
-    }
-
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-      return res.status(500).json({ message: 'Email service is not configured' });
-    }
-
-    const otp = generateOTP();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-
-    // Keep only one active OTP per email.
-    await OTP.deleteMany({ email });
-    await OTP.create({ email, otp, expiresAt });
-
-    await sendEmail({
-      to: email,
-      subject: 'Your Tasky login code',
-      text: `Your Tasky OTP is ${otp}. It expires in 5 minutes.`,
-      html: `<p>Your Tasky OTP is <strong>${otp}</strong>.</p><p>It expires in 5 minutes.</p>`,
-    });
-
-    res.json({ message: 'OTP sent successfully' });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
+const hashPassword = password => {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, SCRYPT_KEY_LENGTH).toString('hex');
+  return `${salt}:${hash}`;
 };
 
-const verifyOTP = async (req, res) => {
+const verifyPassword = (password, storedPassword) => {
+  if (!storedPassword || !storedPassword.includes(':')) return false;
+
+  const [salt, storedHash] = storedPassword.split(':');
+  const hashBuffer = Buffer.from(storedHash, 'hex');
+  const enteredHash = crypto.scryptSync(password, salt, SCRYPT_KEY_LENGTH);
+
+  return hashBuffer.length === enteredHash.length && crypto.timingSafeEqual(hashBuffer, enteredHash);
+};
+
+const formatUser = user => ({
+  _id: user._id,
+  name: user.name,
+  username: user.username,
+  email: user.email,
+  joinDate: user.joinDate || user.createdAt,
+});
+
+const login = async (req, res) => {
   try {
-    const email = sanitizeEmail(req.body.email);
-    const otp = String(req.body.otp || '').trim();
+    const username = sanitizeUsername(req.body.username);
+    const password = String(req.body.password || '');
 
-    if (!EMAIL_RE.test(email)) {
-      return res.status(400).json({ message: 'A valid email is required' });
+    if (!USERNAME_RE.test(username)) {
+      return res.status(400).json({ message: 'Username must be 3-30 letters, numbers, or underscores' });
     }
 
-    if (!/^\d{6}$/.test(otp)) {
-      return res.status(400).json({ message: 'A valid 6-digit OTP is required' });
+    if (password.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
     }
 
-    const otpRecord = await OTP.findOne({ email, otp });
-    if (!otpRecord || otpRecord.expiresAt < new Date()) {
-      await OTP.deleteMany({ email });
-      return res.status(401).json({ message: 'Invalid or expired OTP' });
-    }
+    let user = await User.findOne({ username }).select('+password');
 
-    let user = await User.findOne({ email });
     if (!user) {
-      const name = email.split('@')[0];
-      user = await User.create({ name, email, joinDate: new Date() });
+      user = await User.create({
+        name: username,
+        username,
+        password: hashPassword(password),
+        joinDate: new Date(),
+      });
+    } else if (!verifyPassword(password, user.password)) {
+      return res.status(401).json({ message: 'Invalid username or password' });
     }
-
-    await OTP.deleteMany({ email });
 
     res.json({
       token: generateToken(user._id),
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        joinDate: user.joinDate || user.createdAt,
-      },
+      user: formatUser(user),
     });
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({ message: 'Username already exists' });
+    }
+
     res.status(500).json({ message: error.message });
   }
 };
 
 const getProfile = async (req, res) => {
-  res.json({
-    _id: req.user._id,
-    name: req.user.name,
-    email: req.user.email,
-    joinDate: req.user.joinDate || req.user.createdAt,
-  });
+  res.json(formatUser(req.user));
 };
 
 module.exports = {
-  sendOTP,
-  verifyOTP,
+  login,
   getProfile,
 };

@@ -1,7 +1,6 @@
 // STATE
 let CU = null, tasks = [], notes = [], curF = 'All';
 let taskStats = null, recentActivity = [];
-let authStep = 'email';
 let pieC, barC;
 let mobile = window.innerWidth <= 768;
 window.addEventListener('resize', () => { mobile = window.innerWidth <= 768; });
@@ -23,7 +22,7 @@ function token() { return localStorage.getItem('token'); }
 
 function normalizeUser(user) {
   if (!user) return null;
-  const name = user.name || user.u || user.email?.split('@')[0] || 'User';
+  const name = user.name || user.u || user.username || user.email?.split('@')[0] || 'User';
   return {
     ...user,
     id: user._id || user.id,
@@ -90,17 +89,10 @@ async function apiRequest(path, options = {}) {
   return data;
 }
 
-function login(email) {
-  return apiRequest('/auth/send-otp', {
+function login(username, password) {
+  return apiRequest('/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ email }),
-  });
-}
-
-function verifyOTP(email, otp) {
-  return apiRequest('/auth/verify-otp', {
-    method: 'POST',
-    body: JSON.stringify({ email, otp }),
+    body: JSON.stringify({ username, password }),
   });
 }
 
@@ -144,27 +136,16 @@ function toggleTheme() {
 
 // AUTH
 async function handleAuth() {
-  const email = document.getElementById('authEmail').value.trim().toLowerCase();
-  const otp = document.getElementById('authOtp').value.trim();
+  const username = document.getElementById('authUsername').value.trim().toLowerCase();
+  const password = document.getElementById('authPassword').value;
   const btn = document.getElementById('authBtn');
 
-  if (!email) return toast('A valid email is required');
+  if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) return toast('Username must be 3-30 letters, numbers, or underscores');
+  if (password.length < 6) return toast('Password must be at least 6 characters');
   btn.disabled = true;
 
   try {
-    if (authStep === 'email') {
-      await login(email);
-      authStep = 'otp';
-      document.getElementById('otpField').style.display = 'block';
-      document.getElementById('authBtn').textContent = 'Verify OTP';
-      document.getElementById('authHint').textContent = 'Enter the 6-digit code sent to your email.';
-      document.getElementById('authOtp').focus();
-      toast('OTP sent successfully');
-      return;
-    }
-
-    if (!/^\d{6}$/.test(otp)) return toast('Enter a valid 6-digit OTP');
-    const auth = await verifyOTP(email, otp);
+    const auth = await login(username, password);
     const user = storeAuth(auth);
     await boot(user);
   } finally {
@@ -510,7 +491,7 @@ function renderSettings() {
   if (!CU) return;
   document.getElementById('setAvatar').textContent = CU.u[0].toUpperCase();
   document.getElementById('setName').textContent = CU.u;
-  document.getElementById('setEmail').textContent = CU.email || '';
+  document.getElementById('setEmail').textContent = CU.username ? `@${CU.username}` : CU.email || '';
   const created = CU.at ? new Date(CU.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Tasky account';
   document.getElementById('setSince').textContent = `Member since ${created}`;
 }
@@ -546,6 +527,6 @@ function esc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 document.addEventListener('DOMContentLoaded', () => {
   applyTheme();
   checkSession();
-  document.getElementById('authEmail').addEventListener('keydown', e => { if (e.key === 'Enter') handleAuth(); });
-  document.getElementById('authOtp').addEventListener('keydown', e => { if (e.key === 'Enter') handleAuth(); });
+  document.getElementById('authUsername').addEventListener('keydown', e => { if (e.key === 'Enter') handleAuth(); });
+  document.getElementById('authPassword').addEventListener('keydown', e => { if (e.key === 'Enter') handleAuth(); });
 });
